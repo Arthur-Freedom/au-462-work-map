@@ -1,0 +1,53 @@
+{
+ "source": "immi.homeaffairs.gov.au specified-462-work (LIN 18/197 / F2018L01539)",
+ "boundaries": "ABS Postal Areas (POA) 2021, GDA2020, CC BY 4.0",
+ "postcode_csv": "matthewproctor/australianpostcodes",
+ "simplify_tolerance_deg": 0.003,
+ "areas": {
+  "remote": {
+   "label": "Remote and Very Remote Australia",
+   "jobs": [
+    "Tourism & hospitality"
+   ],
+   "poa_count": 374,
+   "postcode_count": 395
+  },
+  "northern": {
+   "label": "Northern Australia",
+   "jobs": [
+    "Tourism & hospitality",
+    "Plant & animal cultivation",
+    "Fishing & pearling",
+    "Tree farming & felling",
+    "Construction"
+   ],
+   "poa_count": 181,
+   "postcode_count": 200
+  },
+  "regional": {
+   "label": "Regional Australia",
+   "jobs": [
+    "Plant & animal cultivation",
+    "Construction"
+   ],
+   "poa_count": 1795,
+   "postcode_count": 2839
+  },
+  "bushfire": {
+   "label": "Bushfire declared areas",
+   "jobs": [
+    "Bushfire recovery work"
+   ],
+   "poa_count": 1266,
+   "postcode_count": 1274
+  },
+  "disaster": {
+   "label": "Natural disaster declared areas",
+   "jobs": [
+    "Flood / cyclone / severe-weather recovery work"
+   ],
+   "poa_count": 1790,
+   "postcode_count": 1797
+  }
+ }
+}
