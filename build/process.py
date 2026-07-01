@@ -245,6 +245,47 @@ def build_lookup(area_sets, pc_state, centroid, locality):
     print(f"  wrote {out}  ({len(s)/1e6:.2f} MB, {len(lut)} postcodes)")
 
 
+def all_localities():
+    """postcode -> set of every distinct locality/suburb name in the CSV.
+
+    The postcode lookup only keeps ONE primary locality per postcode, but a
+    postcode usually spans several suburbs (2026 = Bondi, Bondi Beach, North
+    Bondi, Tamarama...). Name search needs all of them, so this collects the
+    full set."""
+    locs = defaultdict(set)
+    with open(CSV_PATH, encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            pc = (row.get("postcode") or "").strip()
+            if not pc.isdigit():
+                continue
+            pc = f"{int(pc):04d}"
+            # canonicalise the curly apostrophe (U+2019) to a straight one so
+            # "O'Connor" and "O’Connor" don't appear as two identical results
+            name = (row.get("locality") or "").strip().title().replace("’", "'")
+            if name:
+                locs[pc].add(name)
+    return locs
+
+
+def build_places(area_sets, pc_state):
+    """Flat [name, postcode] index powering search-by-area-name.
+
+    Every distinct suburb/locality name, restricted to postcodes we actually
+    know (so every result resolves to a real record). State is derived from the
+    postcode at lookup time, so it isn't duplicated here."""
+    valid = set(pc_state) | set().union(*area_sets.values())
+    locs = all_localities()
+    entries = []
+    for pc in valid:
+        for name in locs.get(pc, ()):
+            entries.append([name, pc])
+    entries.sort(key=lambda e: (e[0].lower(), e[1]))
+    out = os.path.join(DATA, "places.json")
+    s = json.dumps({"places": entries}, separators=(",", ":"))
+    open(out, "w", encoding="utf-8").write(s)
+    print(f"  wrote {out}  ({len(s)/1e6:.2f} MB, {len(entries)} place names)")
+
+
 def main():
     ensure_inputs()
     print("parsing immi specified-462-work tables ...")
@@ -257,6 +298,8 @@ def main():
     area_counts = build_geojson(area_sets, pc_state)
     print("building postcode lookup ...")
     build_lookup(area_sets, pc_state, centroid, locality)
+    print("building place-name index ...")
+    build_places(area_sets, pc_state)
     meta = {
         "source": "immi.homeaffairs.gov.au specified-462-work (LIN 18/197 / F2018L01539)",
         "boundaries": "ABS Postal Areas (POA) 2021, GDA2020, CC BY 4.0",

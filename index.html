@@ -75,8 +75,26 @@
     background: var(--surface-2); transition: border-color .15s, background .15s, box-shadow .15s;
   }
   .search input:focus { outline: none; border-color: var(--brand); background: #fff; box-shadow: 0 0 0 3px rgba(22,67,58,.12); }
-  .search svg { position: absolute; left: 13px; top: 50%; transform: translateY(-50%); color: var(--ink-faint); pointer-events: none; }
+  .search svg { position: absolute; left: 13px; top: 23px; transform: translateY(-50%); color: var(--ink-faint); pointer-events: none; z-index: 1; }
   .search__hint { margin: 8px 2px 0; font-size: 12px; color: var(--ink-faint); }
+
+  /* ---------- Search suggestions ---------- */
+  .search__results {
+    list-style: none; margin: 6px 0 0; padding: 5px; position: absolute; left: 0; right: 0; top: calc(100% + 4px);
+    z-index: 20; background: #fff; border: 1px solid var(--line); border-radius: 12px;
+    box-shadow: var(--shadow); max-height: 300px; overflow-y: auto; overscroll-behavior: contain;
+  }
+  .search__results[hidden] { display: none; }
+  .search__opt {
+    display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; cursor: pointer;
+    font-size: 13.5px; color: var(--ink); line-height: 1.25;
+  }
+  .search__opt:hover, .search__opt.is-active { background: var(--surface-2); }
+  .search__opt .s-pin { flex: none; width: 9px; height: 9px; border-radius: 3px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
+  .search__opt .s-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  .search__opt .s-name b { color: var(--brand); font-weight: 800; }
+  .search__opt .s-meta { margin-left: auto; padding-left: 12px; flex: none; font-size: 12px; font-weight: 600; letter-spacing: .01em; color: var(--ink-faint); white-space: nowrap; }
+  .search__empty { padding: 11px 10px; font-size: 13px; color: var(--ink-faint); }
 
   /* ---------- Detail card ---------- */
   .detail { margin-top: 14px; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: #fff; }
@@ -210,12 +228,13 @@
     <div class="panel__scroll">
       <!-- Search -->
       <section class="section">
-        <h2 class="section__title">Check a postcode</h2>
+        <h2 class="section__title">Find a postcode or place</h2>
         <div class="search">
           <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-          <input id="search" type="text" inputmode="numeric" maxlength="4" placeholder="Type a 4-digit postcode…" autocomplete="off" aria-label="Search a 4-digit postcode" aria-describedby="searchHint" />
+          <input id="search" type="text" placeholder="Postcode or place — e.g. 2026, Cairns…" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="searchResults" aria-label="Search by postcode or place name" aria-describedby="searchHint" />
+          <ul id="searchResults" class="search__results" role="listbox" aria-label="Search suggestions" hidden></ul>
         </div>
-        <p class="search__hint" id="searchHint">…or hover / tap any area on the map.</p>
+        <p class="search__hint" id="searchHint">Type a 4-digit postcode or a suburb / town name — or hover&nbsp;/&nbsp;tap any area on the map.</p>
 
         <div id="detail" class="detail detail--empty" role="status" aria-live="polite" aria-atomic="true">
           <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7a8595" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 12-9 12s-9-5-9-12a9 9 0 0 1 18 0Z"/><circle cx="12" cy="10" r="3"/></svg>
@@ -292,6 +311,9 @@
   var byKey = {}; AREAS.forEach(function(a){ byKey[a.key] = a; });
 
   var lookup = null;          // postcodes.json
+  var pcKeys = null;          // sorted postcode strings (built once from lookup)
+  var places = null;          // [ [name, pc], ... ] from places.json
+  var placeNorm = null;       // parallel array of normalised names for matching
   var selected = null;        // locked postcode string
   var hovered = null;
   var lastFlown = null;       // last postcode we animated to (avoids re-fly churn)
@@ -492,12 +514,57 @@
     if (!f.length) { setSelected(null); clearDetail(); }
   });
 
-  // ----- search -----
+  // ----- search (by postcode OR place name) -----
   var searchEl = document.getElementById("search");
-  function doSearch(pc, force) {
+  var resultsEl = document.getElementById("searchResults");
+  var MAX_RESULTS = 8;
+  var results = [];   // current suggestions: {pc, name, kind:"pc"|"place"}
+  var activeIdx = -1; // highlighted suggestion (-1 = none)
+
+  // fold case, drop apostrophes (incl. U+2019) and punctuation so "st marys",
+  // "St Mary's" and "stmarys" all match the same locality
+  function normalize(s) {
+    return String(s == null ? "" : s).toLowerCase()
+      .replace(/[’']/g, "")
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+  }
+  // most-permissive area colour for a postcode's flag bits (map legend colour), grey if none
+  function topColor(bits) {
+    var f = flagsFromBits(bits), a = areasFor(f);
+    return a.length ? a[0].color : GREY;
+  }
+  // normalise a string AND record, for each normalised char, its index in the
+  // original — so a match found on the normalised form can be mapped back to the
+  // exact original run (incl. interior apostrophes/punctuation) for highlighting
+  function normMap(s) {
+    s = String(s == null ? "" : s);
+    var out = "", map = [], prevSpace = false;
+    for (var i = 0; i < s.length; i++) {
+      var c = s[i];
+      if (c === "’" || c === "'") continue;        // dropped, like normalize()
+      var lc = c.toLowerCase();
+      if (lc >= "a" && lc <= "z" || lc >= "0" && lc <= "9") { out += lc; map.push(i); prevSpace = false; }
+      else if (!prevSpace && out.length) { out += " "; map.push(i); prevSpace = true; }
+    }
+    while (out.length && out.charAt(out.length - 1) === " ") { out = out.slice(0, -1); map.pop(); }
+    return { norm: out, map: map };
+  }
+  // bold the run in the ORIGINAL name that corresponds to the normalised query
+  function highlight(name, q) {
+    var qn = normalize(q);
+    if (!qn) return esc(name);
+    var nm = normMap(name), i = nm.norm.indexOf(qn);
+    if (i < 0) return esc(name);
+    var a = nm.map[i], b = nm.map[i + qn.length - 1] + 1; // original [start, end)
+    return esc(name.slice(0, a)) + "<b>" + esc(name.slice(a, b)) + "</b>" + esc(name.slice(b));
+  }
+
+  function doSearch(pc, force, displayLoc) {
     if (!lookup) return;
-    pc = (pc||"").trim();
-    if (!/^\d{4}$/.test(pc)) return;
+    pc = (pc || "").trim();
+    if (!/^\d{1,4}$/.test(pc)) return;
+    pc = pc.length < 4 ? ("000" + pc).slice(-4) : pc;
     var rec = lookup[pc];
     if (!rec) {
       setSelected(null);
@@ -505,7 +572,7 @@
       return;
     }
     setSelected(pc);
-    renderDetail(pc, { flags:flagsFromBits(rec.f), loc:rec.l, state:rec.s });
+    renderDetail(pc, { flags:flagsFromBits(rec.f), loc: displayLoc || rec.l, state:rec.s });
     // only animate when the target actually changes (or on explicit Enter),
     // so editing/retyping the same code doesn't fight the user with re-flights
     if (rec.c && (force || pc !== lastFlown)) {
@@ -514,10 +581,117 @@
     }
     if (window.innerWidth <= 860) collapse(false);
   }
-  searchEl.addEventListener("keydown", function(e){ if (e.key === "Enter") doSearch(searchEl.value, true); });
-  searchEl.addEventListener("input", function(){
-    var v = searchEl.value.replace(/\D/g,"").slice(0,4); searchEl.value = v;
-    if (v.length === 4) doSearch(v);
+
+  // rank & collect suggestions for the current query
+  function matchQuery(raw) {
+    var q = raw.trim();
+    if (!q || !lookup) return [];
+    var digits = q.replace(/\D/g, "");
+    // pure-number query -> postcode prefix search
+    if (/^\d+$/.test(q)) {
+      if (!pcKeys) pcKeys = Object.keys(lookup).sort();
+      var out = [];
+      for (var i = 0; i < pcKeys.length && out.length < MAX_RESULTS; i++) {
+        if (pcKeys[i].indexOf(digits) === 0) {
+          out.push({ pc: pcKeys[i], name: (lookup[pcKeys[i]].l || ""), kind: "pc" });
+        }
+      }
+      return out;
+    }
+    // otherwise -> place-name search (prefix beats word-start beats substring)
+    if (!places) return [];
+    var qn = normalize(q);
+    if (!qn) return [];
+    var scored = [];
+    for (var j = 0; j < places.length; j++) {
+      var nn = placeNorm[j], rank;
+      if (nn === qn) rank = 0;
+      else if (nn.indexOf(qn) === 0) rank = 1;
+      else if (nn.indexOf(" " + qn) >= 0) rank = 2;
+      else if (nn.indexOf(qn) >= 0) rank = 3;
+      else continue;
+      scored.push({ rank: rank, len: nn.length, pc: places[j][1], name: places[j][0] });
+    }
+    scored.sort(function (a, b) {
+      return a.rank - b.rank || a.len - b.len || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+    });
+    return scored.slice(0, MAX_RESULTS).map(function (r) {
+      return { pc: r.pc, name: r.name, kind: "place" };
+    });
+  }
+
+  function renderResults(raw) {
+    var q = raw.trim();
+    if (!q) { closeResults(); return; }
+    results = matchQuery(raw);
+    activeIdx = -1;
+    if (!results.length) {
+      resultsEl.innerHTML = '<li class="search__empty">No matching postcode or place.</li>';
+      openResults();
+      return;
+    }
+    resultsEl.innerHTML = results.map(function (r, i) {
+      var rec = lookup[r.pc] || {};
+      var pin = '<span class="s-pin" style="background:' + topColor(rec.f || "00000") + '"></span>';
+      var main, meta;
+      if (r.kind === "pc") {
+        main = "<b>" + esc(r.pc) + "</b>";
+        meta = esc((r.name ? r.name + ", " : "") + (rec.s || ""));
+      } else {
+        main = highlight(r.name, q);
+        meta = esc((rec.s ? rec.s + " · " : "") + r.pc);
+      }
+      return '<li class="search__opt" id="sopt-' + i + '" role="option" aria-selected="false" data-idx="' + i + '">' +
+        pin + '<span class="s-name">' + main + '</span><span class="s-meta">' + meta + '</span></li>';
+    }).join("");
+    openResults();
+  }
+
+  function openResults() {
+    resultsEl.hidden = false;
+    searchEl.setAttribute("aria-expanded", "true");
+  }
+  function closeResults() {
+    resultsEl.hidden = true;
+    resultsEl.innerHTML = "";
+    results = []; activeIdx = -1;
+    searchEl.setAttribute("aria-expanded", "false");
+    searchEl.removeAttribute("aria-activedescendant");
+  }
+  function setActive(idx) {
+    var opts = resultsEl.querySelectorAll(".search__opt");
+    if (!opts.length) return;
+    if (activeIdx >= 0 && opts[activeIdx]) { opts[activeIdx].classList.remove("is-active"); opts[activeIdx].setAttribute("aria-selected", "false"); }
+    activeIdx = (idx + opts.length) % opts.length;
+    var el = opts[activeIdx];
+    el.classList.add("is-active"); el.setAttribute("aria-selected", "true");
+    el.scrollIntoView({ block: "nearest" });
+    searchEl.setAttribute("aria-activedescendant", el.id);
+  }
+  function chooseResult(res) {
+    if (!res) return;
+    searchEl.value = res.kind === "place" ? res.name : res.pc;
+    closeResults();
+    doSearch(res.pc, true, res.kind === "place" ? res.name : null);
+  }
+
+  searchEl.addEventListener("input", function () { renderResults(searchEl.value); });
+  searchEl.addEventListener("focus", function () { if (searchEl.value.trim()) renderResults(searchEl.value); });
+  searchEl.addEventListener("keydown", function (e) {
+    if (e.key === "ArrowDown") { e.preventDefault(); if (!results.length) renderResults(searchEl.value); else setActive(activeIdx + 1); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); if (results.length) setActive(activeIdx - 1); }
+    else if (e.key === "Enter") {
+      e.preventDefault();
+      if (results.length) chooseResult(results[activeIdx >= 0 ? activeIdx : 0]);
+      else if (/^\d{4}$/.test(searchEl.value.trim())) { closeResults(); doSearch(searchEl.value, true); } // unknown-postcode feedback
+    }
+    else if (e.key === "Escape") { closeResults(); }
+  });
+  searchEl.addEventListener("blur", function () { setTimeout(closeResults, 140); });
+  resultsEl.addEventListener("mousedown", function (e) { e.preventDefault(); }); // keep input focused through the click
+  resultsEl.addEventListener("click", function (e) {
+    var li = e.target.closest(".search__opt");
+    if (li && li.dataset.idx != null) chooseResult(results[+li.dataset.idx]);
   });
 
   // ----- layer toggles UI -----
@@ -574,8 +748,15 @@
     rebuildPaint();
     fetch("./data/postcodes.json")
       .then(function(r){ if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-      .then(function(j){ lookup = j; })
+      .then(function(j){ lookup = j; pcKeys = null; })
       .catch(function(e){ console.warn("Postcode search index failed to load:", e); }); // hover/click still work
+    fetch("./data/places.json")
+      .then(function(r){ if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(function(j){
+        places = j.places || [];
+        placeNorm = places.map(function(p){ return normalize(p[0]); });
+      })
+      .catch(function(e){ console.warn("Place-name index failed to load:", e); }); // postcode search still works
   });
   // hide the loader as soon as the polygons are ready (don't wait for full idle)
   map.on("sourcedata", function(e){ if (e.sourceId === "poa" && e.isSourceLoaded) hideLoader(); });

@@ -105,6 +105,13 @@ Three sources feed the build (`build/process.py`):
    have no polygon.
 3. **Postcode → state + centroid: `matthewproctor/australianpostcodes`** (community, public
    domain). Used to expand the whole-state grants and to power the search box (fly-to + existence).
+   The same CSV also yields **every suburb/town name** per postcode → `data/places.json`, which
+   drives **search-by-place-name** (not just by 4-digit postcode). `postcodes.json` keeps only one
+   *primary* locality per postcode, so a separate full name index is needed (2026 = Bondi, Bondi
+   Beach, North Bondi, Tamarama…); curly apostrophes (U+2019) are canonicalised to `'` so
+   "O'Connor"/"O’Connor" don't double up. Search matches on postcode prefix **or** place name
+   (prefix > word-start > substring), apostrophe/punctuation-insensitive; state is derived from the
+   postcode at lookup time so it isn't duplicated in the index.
 
 **Pipeline:** download POA + CSV (immi HTML is bundled) → parse the 5 area sets → expand
 whole-state grants → for each POA polygon, simplify (~330 m) + round coords (4 dp) + tag flags
@@ -149,6 +156,7 @@ Short flag codes are **explicit** because `"remote"` and `"regional"` both start
 index.html            # the whole app (MapLibre map, layers, search, detail panel) — no build step
 data/eligible_poa.geojson  # 2,644 simplified POA polygons tagged with area flags r/n/g/b/d + state
 data/postcodes.json        # every postcode → {state, flags, centroid, locality} for search
+data/places.json           # {"places":[[name,postcode],…]} — every suburb/town name for name search
 data/meta.json             # build provenance + per-area counts
 build/process.py           # the data pipeline (scrape → tag → simplify → emit)
 build/raw/                 # raw inputs (gitignored; re-downloaded on build)

@@ -27,7 +27,8 @@ designated area it falls in:
 
 Because *Remote* and *Northern* postcodes are almost always **also** in the *Regional* list,
 the default view is mostly green/purple; toggle layers off to isolate a single area. Hover or tap
-any area — or search a postcode — to see its full eligibility and the qualifying job types.
+any area — or search a **postcode or place name** (any suburb / town, e.g. *Cairns*, *Bondi Beach*) —
+to see its full eligibility and the qualifying job types.
 
 Bushfire & natural-disaster recovery areas are **off by default**: they're declaration-based,
 change over time, and overlap the major cities (recovery work is a special case).
@@ -77,9 +78,10 @@ pip install shapely
 python build/process.py     # re-downloads the CSV + ABS POA if missing; immi HTML is bundled
 ```
 
-Outputs: `data/eligible_poa.geojson` (tagged polygons), `data/postcodes.json` (search lookup),
-`data/meta.json` (per-area counts + provenance). Tune `SIMPLIFY_TOL` / `COORD_DECIMALS` at the top
-of `build/process.py` to trade size for fidelity.
+Outputs: `data/eligible_poa.geojson` (tagged polygons), `data/postcodes.json` (postcode lookup),
+`data/places.json` (suburb/town name → postcode index for the search box), `data/meta.json`
+(per-area counts + provenance). Tune `SIMPLIFY_TOL` / `COORD_DECIMALS` at the top of
+`build/process.py` to trade size for fidelity.
 
 ## Sources & attribution
 
